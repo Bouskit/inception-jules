@@ -1,0 +1,164 @@
+services:
+  
+  mariadb:
+    build: requirements/mariadb
+    image: mariadb:inception
+    container_name: mariadb
+    env_file: .env
+    secrets:
+      - db_password
+      - db_root_password
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - inception
+    restart: unless-stopped
+
+  wordpress:
+    build: requirements/wordpress
+    image: wordpress:inception
+    container_name: wordpress
+    env_file: .env
+    secrets:
+      - db_password
+      - wp_admin_password
+      - wp_user_password
+    volumes:
+      - wp_data:/var/www/html
+    networks:
+      - inception
+    depends_on:
+      mariadb:
+        condition: service_started
+      redis: 
+        condition: service_started
+        required: false
+    restart: unless-stopped
+
+  nginx:
+    build: requirements/nginx
+    image: nginx:inception
+    container_name: nginx
+    environment:
+      - DOMAIN_NAME=${DOMAIN_NAME}
+    ports:
+      - "443:443"
+    volumes:
+      - wp_data:/var/www/html
+    networks:
+      inception:
+        aliases:
+          - bboukach.42.fr        #wordpress veut parfois acceder au site (loopback) donc on l'envoie vers nginx
+    depends_on:
+      - wordpress
+    restart: unless-stopped
+
+  website:
+    build: requirements/bonus/website
+    image: website:inception
+    container_name: website
+    ports:
+      - "8080:8080"
+    networks:
+      - inception
+    restart: unless-stopped
+    profiles: ["bonus"]
+
+  adminer:
+    build: requirements/bonus/adminer
+    image: adminer:inception
+    container_name: adminer
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      - inception
+    depends_on:
+      - mariadb
+    restart: unless-stopped
+    init: true
+    profiles: ["bonus"]
+
+  redis:
+    build: requirements/bonus/redis
+    image: redis:inception
+    container_name: redis
+    networks:
+      - inception
+    restart: unless-stopped
+    profiles: ["bonus"]
+
+  ftp:
+    build: requirements/bonus/ftp
+    image: ftp:inception
+    container_name: ftp
+    environment:
+      - FTP_USER=${FTP_USER}
+    secrets:
+      - ftp_password
+    ports:
+      - "127.0.0.1:21:21"
+      - "127.0.0.1:21100-21110:21100-21110"
+    volumes:
+      - wp_data:/var/www/html
+    networks:
+      - inception
+    restart: unless-stopped
+    init: true
+    profiles: ["bonus"]
+
+  backup:
+    build: requirements/bonus/backup
+    image: backup:inception
+    container_name: backup
+    environment:
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+    secrets:
+      - db_password
+    volumes:
+      - wp_data:/var/www/html:ro
+      - backup_data:/backups
+    networks:
+      - inception
+    depends_on:
+      - mariadb
+    init: true
+    restart: unless-stopped
+    profiles: ["bonus"]
+
+
+networks:
+  inception:
+    driver: bridge
+
+volumes:
+  db_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/bboukach/data/mariadb
+  wp_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/bboukach/data/wordpress
+  backup_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /home/bboukach/data/backups
+
+secrets:
+  db_password:
+    file: ../secrets/db_password.txt
+  db_root_password:
+    file: ../secrets/db_root_password.txt
+  wp_admin_password:
+    file: ../secrets/wp_admin_password.txt
+  wp_user_password:
+    file: ../secrets/wp_user_password.txt
+  ftp_password:
+    file: ../secrets/ftp_password.txt
